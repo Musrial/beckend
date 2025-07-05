@@ -22,11 +22,8 @@ app.use(express.urlencoded({ extended: true }));
 
 // PostgreSQL connection
 const pool = new pg.Pool({
-  user: process.env.DB_USER,
-  host: process.env.DB_HOST,
-  database: process.env.DB_NAME,
-  password: process.env.DB_PASSWORD,
-  port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 5432, // Pastikan dalam format numerik
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false } // Penting untuk Neon
 });
 
 // Cek koneksi ke database
@@ -44,9 +41,9 @@ connectDB();
 const authenticateToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-  
+
   if (!token) return res.status(401).json({ message: 'Token not provided' });
-  
+
   jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
     if (err) return res.status(403).json({ message: 'Invalid or expired token' });
     req.user = user;
@@ -66,29 +63,29 @@ const authorizeAdmin = (req, res, next) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    
+
     const result = await pool.query(
       'SELECT * FROM users WHERE username = $1',
       [username]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(401).json({ message: 'Invalid username or password' });
     }
-    
+
     const user = result.rows[0];
     const isMatch = await bcrypt.compare(password, user.password);
-    
+
     if (!isMatch) {
       return res.status(401).json({ message: 'Invalid username or password' });
     }
-    
+
     const token = jwt.sign({
       id: user.id,
       username: user.username,
       role: user.role
     }, process.env.JWT_SECRET, { expiresIn: '8h' });
-    
+
     res.json({
       token,
       user: {
@@ -118,21 +115,21 @@ app.get('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
 app.post('/api/users', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { nama, username, password, role } = req.body;
-    
+
     // Check if username already exists
     const checkUser = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
     if (checkUser.rowCount > 0) {
       return res.status(400).json({ message: 'Username already exists' });
     }
-    
+
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
     const result = await pool.query(
       'INSERT INTO users (nama, username, password, role) VALUES ($1, $2, $3, $4) RETURNING id, nama, username, role',
       [nama, username, hashedPassword, role]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating user:', error);
@@ -144,7 +141,7 @@ app.put('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) =>
   try {
     const { id } = req.params;
     const { nama, username, password, role } = req.body;
-    
+
     // Check if username exists and doesn't belong to the current user
     if (username) {
       const checkUser = await pool.query('SELECT * FROM users WHERE username = $1 AND id != $2', [username, id]);
@@ -152,9 +149,9 @@ app.put('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) =>
         return res.status(400).json({ message: 'Username already exists' });
       }
     }
-    
+
     let query, params;
-    
+
     if (password) {
       // Hash new password
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -164,13 +161,13 @@ app.put('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) =>
       query = 'UPDATE users SET nama = $1, username = $2, role = $3 WHERE id = $4 RETURNING id, nama, username, role';
       params = [nama, username, role, id];
     }
-    
+
     const result = await pool.query(query, params);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating user:', error);
@@ -181,13 +178,13 @@ app.put('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) =>
 app.delete('/api/users/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM users WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'User not found' });
     }
-    
+
     res.json({ message: 'User deleted successfully' });
   } catch (error) {
     console.error('Error deleting user:', error);
@@ -209,12 +206,12 @@ app.get('/api/kategori', authenticateToken, async (req, res) => {
 app.post('/api/kategori', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { nama_kategori } = req.body;
-    
+
     const result = await pool.query(
       'INSERT INTO kategori_barang (nama_kategori) VALUES ($1) RETURNING *',
       [nama_kategori]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating kategori:', error);
@@ -226,16 +223,16 @@ app.put('/api/kategori/:id', authenticateToken, authorizeAdmin, async (req, res)
   try {
     const { id } = req.params;
     const { nama_kategori } = req.body;
-    
+
     const result = await pool.query(
       'UPDATE kategori_barang SET nama_kategori = $1 WHERE id = $2 RETURNING *',
       [nama_kategori, id]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Kategori not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating kategori:', error);
@@ -246,13 +243,13 @@ app.put('/api/kategori/:id', authenticateToken, authorizeAdmin, async (req, res)
 app.delete('/api/kategori/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM kategori_barang WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Kategori not found' });
     }
-    
+
     res.json({ message: 'Kategori deleted successfully' });
   } catch (error) {
     console.error('Error deleting kategori:', error);
@@ -274,12 +271,12 @@ app.get('/api/jenis', authenticateToken, async (req, res) => {
 app.post('/api/jenis', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { nama_jenis } = req.body;
-    
+
     const result = await pool.query(
       'INSERT INTO jenis_barang (nama_jenis) VALUES ($1) RETURNING *',
       [nama_jenis]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating jenis barang:', error);
@@ -291,16 +288,16 @@ app.put('/api/jenis/:id', authenticateToken, authorizeAdmin, async (req, res) =>
   try {
     const { id } = req.params;
     const { nama_jenis } = req.body;
-    
+
     const result = await pool.query(
       'UPDATE jenis_barang SET nama_jenis = $1 WHERE id = $2 RETURNING *',
       [nama_jenis, id]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Jenis barang not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating jenis barang:', error);
@@ -311,13 +308,13 @@ app.put('/api/jenis/:id', authenticateToken, authorizeAdmin, async (req, res) =>
 app.delete('/api/jenis/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM jenis_barang WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Jenis barang not found' });
     }
-    
+
     res.json({ message: 'Jenis barang deleted successfully' });
   } catch (error) {
     console.error('Error deleting jenis barang:', error);
@@ -345,12 +342,12 @@ app.get('/api/barang', authenticateToken, async (req, res) => {
 app.post('/api/barang', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { nama_barang, id_kategori, id_jenis, stok, harga_beli, harga_jual } = req.body;
-    
+
     const result = await pool.query(
       'INSERT INTO barang (nama_barang, id_kategori, id_jenis, stok, harga_beli, harga_jual) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
       [nama_barang, id_kategori, id_jenis, stok, harga_beli, harga_jual]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating barang:', error);
@@ -362,16 +359,16 @@ app.put('/api/barang/:id', authenticateToken, authorizeAdmin, async (req, res) =
   try {
     const { id } = req.params;
     const { nama_barang, id_kategori, id_jenis, stok, harga_beli, harga_jual } = req.body;
-    
+
     const result = await pool.query(
       'UPDATE barang SET nama_barang = $1, id_kategori = $2, id_jenis = $3, stok = $4, harga_beli = $5, harga_jual = $6 WHERE id = $7 RETURNING *',
       [nama_barang, id_kategori, id_jenis, stok, harga_beli, harga_jual, id]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Barang not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating barang:', error);
@@ -382,13 +379,13 @@ app.put('/api/barang/:id', authenticateToken, authorizeAdmin, async (req, res) =
 app.delete('/api/barang/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM barang WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Barang not found' });
     }
-    
+
     res.json({ message: 'Barang deleted successfully' });
   } catch (error) {
     console.error('Error deleting barang:', error);
@@ -410,12 +407,12 @@ app.get('/api/supplier', authenticateToken, async (req, res) => {
 app.post('/api/supplier', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { nama_supplier, kontak, alamat } = req.body;
-    
+
     const result = await pool.query(
       'INSERT INTO supplier (nama_supplier, kontak, alamat) VALUES ($1, $2, $3) RETURNING *',
       [nama_supplier, kontak, alamat]
     );
-    
+
     res.status(201).json(result.rows[0]);
   } catch (error) {
     console.error('Error creating supplier:', error);
@@ -427,16 +424,16 @@ app.put('/api/supplier/:id', authenticateToken, authorizeAdmin, async (req, res)
   try {
     const { id } = req.params;
     const { nama_supplier, kontak, alamat } = req.body;
-    
+
     const result = await pool.query(
       'UPDATE supplier SET nama_supplier = $1, kontak = $2, alamat = $3 WHERE id = $4 RETURNING *',
       [nama_supplier, kontak, alamat, id]
     );
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Supplier not found' });
     }
-    
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error('Error updating supplier:', error);
@@ -447,13 +444,13 @@ app.put('/api/supplier/:id', authenticateToken, authorizeAdmin, async (req, res)
 app.delete('/api/supplier/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     const result = await pool.query('DELETE FROM supplier WHERE id = $1 RETURNING id', [id]);
-    
+
     if (result.rowCount === 0) {
       return res.status(404).json({ message: 'Supplier not found' });
     }
-    
+
     res.json({ message: 'Supplier deleted successfully' });
   } catch (error) {
     console.error('Error deleting supplier:', error);
@@ -548,7 +545,7 @@ app.get('/api/pembelian', authenticateToken, authorizeAdmin, async (req, res) =>
 app.get('/api/pembelian/:id', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    
+
     // Get pembelian header
     const headerResult = await pool.query(`
       SELECT tp.*, s.nama_supplier 
@@ -556,11 +553,11 @@ app.get('/api/pembelian/:id', authenticateToken, authorizeAdmin, async (req, res
       LEFT JOIN supplier s ON tp.id_supplier = s.id
       WHERE tp.id = $1
     `, [id]);
-    
+
     if (headerResult.rowCount === 0) {
       return res.status(404).json({ message: 'Transaksi pembelian not found' });
     }
-    
+
     // Get detail pembelian
     const detailResult = await pool.query(`
       SELECT dp.*, b.nama_barang 
@@ -568,7 +565,7 @@ app.get('/api/pembelian/:id', authenticateToken, authorizeAdmin, async (req, res
       LEFT JOIN barang b ON dp.id_barang = b.id
       WHERE dp.id_pembelian = $1
     `, [id]);
-    
+
     res.json({
       pembelian: headerResult.rows[0],
       details: detailResult.rows
@@ -581,39 +578,39 @@ app.get('/api/pembelian/:id', authenticateToken, authorizeAdmin, async (req, res
 
 app.post('/api/pembelian', authenticateToken, authorizeAdmin, async (req, res) => {
   const client = await pool.connect();
-  
+
   try {
     await client.query('BEGIN');
-    
+
     const { id_supplier, total_harga, details } = req.body;
-    
+
     // Insert pembelian header
     const headerResult = await client.query(
       'INSERT INTO transaksi_pembelian (id_supplier, total_harga) VALUES ($1, $2) RETURNING *',
       [id_supplier, total_harga]
     );
-    
+
     const pembelianId = headerResult.rows[0].id;
-    
+
     // Insert details and update stock
     for (const detail of details) {
       const { id_barang, jumlah, harga_satuan, subtotal } = detail;
-      
+
       // Insert detail
       await client.query(
         'INSERT INTO detail_pembelian (id_pembelian, id_barang, jumlah, harga_satuan, subtotal) VALUES ($1, $2, $3, $4, $5)',
         [pembelianId, id_barang, jumlah, harga_satuan, subtotal]
       );
-      
+
       // Update barang stock
       await client.query(
         'UPDATE barang SET stok = stok + $1 WHERE id = $2',
         [jumlah, id_barang]
       );
     }
-    
+
     await client.query('COMMIT');
-    
+
     res.status(201).json({ 
       message: 'Transaksi pembelian berhasil',
       id: pembelianId
@@ -777,7 +774,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       GROUP BY DATE(tanggal)
       ORDER BY DATE(tanggal)
     `);
-    
+
     // Total pendapatan per kategori
     const penjualanPerKategori = await pool.query(`
       SELECT 
@@ -790,7 +787,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       WHERE tp.tanggal >= NOW() - INTERVAL '30 days'
       GROUP BY k.nama_kategori
     `);
-    
+
     // Barang hampir habis
     const barangHampirHabis = await pool.query(`
       SELECT id, nama_barang, stok
@@ -799,7 +796,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       ORDER BY stok
       LIMIT 10
     `);
-    
+
     // Metode pembayaran count
     const metodePembayaran = await pool.query(`
       SELECT metode_pembayaran, COUNT(*) as jumlah
@@ -807,31 +804,31 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
       WHERE tanggal >= NOW() - INTERVAL '30 days'
       GROUP BY metode_pembayaran
     `);
-    
+
     // Total summary
     const totalPenjualanBulan = await pool.query(`
       SELECT SUM(total_harga) as total
       FROM transaksi_penjualan
       WHERE tanggal >= DATE_TRUNC('month', CURRENT_DATE)
     `);
-    
+
     const totalPembelianBulan = await pool.query(`
       SELECT SUM(total_harga) as total
       FROM transaksi_pembelian
       WHERE tanggal >= DATE_TRUNC('month', CURRENT_DATE)
     `);
-    
+
     const totalTransaksiBulan = await pool.query(`
       SELECT COUNT(*) as total
       FROM transaksi_penjualan
       WHERE tanggal >= DATE_TRUNC('month', CURRENT_DATE)
     `);
-    
+
     const totalBarang = await pool.query(`
       SELECT COUNT(*) as total
       FROM barang
     `);
-    
+
     res.json({
       transaksiHarian: transaksiHarian.rows,
       penjualanPerKategori: penjualanPerKategori.rows,
@@ -853,7 +850,7 @@ app.get('/api/dashboard', authenticateToken, async (req, res) => {
 app.get('/api/reports/penjualan', authenticateToken, async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
-    
+
     const result = await pool.query(`
       SELECT tp.*, p.nama_pelanggan, u.nama as nama_kasir
       FROM transaksi_penjualan tp
@@ -862,7 +859,7 @@ app.get('/api/reports/penjualan', authenticateToken, async (req, res) => {
       WHERE tp.tanggal >= $1 AND tp.tanggal < ($2::date + INTERVAL '1 day')
       ORDER BY tp.tanggal DESC
     `, [start_date, end_date]);
-    
+
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching penjualan report:', error);
@@ -873,7 +870,7 @@ app.get('/api/reports/penjualan', authenticateToken, async (req, res) => {
 app.get('/api/reports/pembelian', authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const { start_date, end_date } = req.query;
-    
+
     const result = await pool.query(`
       SELECT tp.*, s.nama_supplier
       FROM transaksi_pembelian tp
@@ -881,7 +878,7 @@ app.get('/api/reports/pembelian', authenticateToken, authorizeAdmin, async (req,
      WHERE tp.tanggal >= $1 AND tp.tanggal < ($2::date + INTERVAL '1 day')
       ORDER BY tp.tanggal DESC
     `, [start_date, end_date]);
-    
+
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching pembelian report:', error);
@@ -898,7 +895,7 @@ app.get('/api/reports/stok', authenticateToken, authorizeAdmin, async (req, res)
       LEFT JOIN jenis_barang j ON b.id_jenis = j.id
       ORDER BY b.stok ASC
     `);
-    
+
     res.json(result.rows);
   } catch (error) {
     console.error('Error fetching stok report:', error);
@@ -909,7 +906,7 @@ app.get('/api/reports/stok', authenticateToken, authorizeAdmin, async (req, res)
 // Serve static assets if in production
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.join(__dirname, '../dist')));
-  
+
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../dist', 'index.html'));
   });
